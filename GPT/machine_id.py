@@ -5,18 +5,27 @@ import platform
 
 import uuid
 
+
 def get_machine_unique_identifier():
     if platform.system() == "Windows":
+
         # Use the Windows Management Instrumentation (WMI) interface
         import wmi
+
         wmi_obj = wmi.WMI()
+
         for interface in wmi_obj.Win32_NetworkAdapterConfiguration(IPEnabled=True):
             mac_address = interface.MACAddress
+
             break
+
     else:
+
         for line in os.popen("ifconfig" if platform.system() != "Linux" else "ip link"):
+
             if "ether" in line or "HWaddr" in line:
                 mac_address = line.split()[1]
+
                 break
 
     # Create a UUID based on the MAC address and a namespace
@@ -28,6 +37,9 @@ def get_machine_unique_identifier():
 
     return machine_unique_id
 
+
 if __name__ == '__main__':
+    #
     unique_id = get_machine_unique_identifier()
+
     print(f"Unique Identifier for this machine: {unique_id}")

@@ -1,4 +1,5 @@
 import numpy as np
+
 from scipy.fftpack import dct
 
 
@@ -6,64 +7,88 @@ from scipy.fftpack import dct
 
 def sliding_window(x, window_size, window_shift):
     shape = x.shape[:-1] + (x.shape[-1] - window_size + 1, window_size)
+
     strides = x.strides + (x.strides[-1],)
+
     return np.lib.stride_tricks.as_strided(x, shape=shape, strides=strides)[::window_shift]
 
 
 def func_num_frames(num_samples, window_size, window_shift, snip_edges):
+    #
     if snip_edges:
+
         if num_samples < window_size:
             return 0
         else:
             return 1 + ((num_samples - window_size) // window_shift)
+
     else:
+
         return (num_samples + (window_shift // 2)) // window_shift
 
 
 def func_dither(waveform, dither_value):
+    #
     if dither_value == 0.0:
+        #
         return waveform
+
     waveform += np.random.normal(size=waveform.shape).astype(waveform.dtype) * dither_value
+
     return waveform
 
 
 def func_remove_dc_offset(waveform):
+    #
     return waveform - np.mean(waveform)
 
 
 def func_log_energy(waveform):
+    #
     return np.log(np.dot(waveform, waveform).clip(min=np.finfo(waveform.dtype).eps))
 
 
 def func_preemphasis(waveform, preemph_coeff):
+    #
     if preemph_coeff == 0.0:
+        #
         return waveform
+
     assert 0 < preemph_coeff <= 1
+
     waveform[1:] -= preemph_coeff * waveform[:-1]
     waveform[0] -= preemph_coeff * waveform[0]
+
     return waveform
 
 
 def sine(M):
+    #
     if M < 1:
         return np.array([])
     if M == 1:
         return np.ones(1, float)
+
     n = np.arange(0, M)
-    return np.sin(np.pi*n/(M-1))
+
+    return np.sin(np.pi * n / (M - 1))
 
 
 def povey(M):
+    #
     if M < 1:
         return np.array([])
     if M == 1:
         return np.ones(1, float)
+
     n = np.arange(0, M)
-    return (0.5 - 0.5*np.cos(2.0*np.pi*n/(M-1)))**0.85
+
+    return (0.5 - 0.5 * np.cos(2.0 * np.pi * n / (M - 1))) ** 0.85
 
 
 def feature_window_function(window_type, window_size, blackman_coeff):
     assert window_size > 0
+
     if window_type == 'hanning':
         return np.hanning(window_size)
     elif window_type == 'sine':
@@ -75,16 +100,21 @@ def feature_window_function(window_type, window_size, blackman_coeff):
     elif window_type == 'rectangular':
         return np.ones(window_size)
     elif window_type == 'blackman':
+
         window_func = np.blackman(window_size)
+
         if blackman_coeff == 0.42:
             return window_func
         else:
             return window_func - 0.42 + blackman_coeff
+
     else:
+
         raise ValueError('Invalid window type {}'.format(window_type))
 
 
 def process_window(window, dither, remove_dc_offset, preemphasis_coefficient, window_function, raw_energy):
+    #
     if dither != 0.0:
         window = func_dither(window, dither)
     if remove_dc_offset:
@@ -93,31 +123,46 @@ def process_window(window, dither, remove_dc_offset, preemphasis_coefficient, wi
         log_energy = func_log_energy(window)
     if preemphasis_coefficient != 0.0:
         window = func_preemphasis(window, preemphasis_coefficient)
+
     window *= window_function
+
     if not raw_energy:
+        #
         log_energy = func_log_energy(window)
+
     return window, log_energy
 
 
 def extract_window(waveform, blackman_coeff, dither, window_size, window_shift,
                    preemphasis_coefficient, raw_energy, remove_dc_offset,
                    snip_edges, window_type, dtype):
+    #
     num_samples = len(waveform)
     num_frames = func_num_frames(num_samples, window_size, window_shift, snip_edges)
     num_samples_ = (num_frames - 1) * window_shift + window_size
+
     if snip_edges:
+
         waveform = waveform[:num_samples_]
+
     else:
+
         offset = window_shift // 2 - window_size // 2
+
         waveform = np.concatenate([
             waveform[-offset - 1::-1],
             waveform,
             waveform[:-(offset + num_samples_ - num_samples + 1):-1]
         ])
+
     frames = sliding_window(waveform, window_size=window_size, window_shift=window_shift)
+
     frames = frames.astype(dtype)
+
     log_enery = np.empty(frames.shape[0], dtype=dtype)
+
     for i in range(frames.shape[0]):
+        #
         frames[i], log_enery[i] = process_window(
             window=frames[i],
             dither=dither,
@@ -130,7 +175,9 @@ def extract_window(waveform, blackman_coeff, dither, window_size, window_shift,
             ).astype(dtype),
             raw_energy=raw_energy
         )
+
     return frames, log_enery
+
 
 # ---------- feature-window ----------
 
@@ -138,61 +185,102 @@ def extract_window(waveform, blackman_coeff, dither, window_size, window_shift,
 # ---------- feature-functions ----------
 
 def compute_spectrum(frames, n):
+    #
     complex_spec = np.fft.rfft(frames, n)
+
     return np.absolute(complex_spec)
 
 
 def compute_power_spectrum(frames, n):
+    #
     return np.square(compute_spectrum(frames, n))
 
 
 def apply_cmvn_sliding_internal(feat, center=False, window=600, min_window=100, norm_vars=False):
+    #
     num_frames, feat_dim = feat.shape
+
     std = 1
+
     if center:
+
         if num_frames <= window:
+
             mean = feat.mean(axis=0, keepdims=True).repeat(num_frames, axis=0)
+
             if norm_vars:
                 std = feat.std(axis=0, keepdims=True).repeat(num_frames, axis=0)
+
         else:
+
             feat1 = feat[:window]
+
             feat2 = sliding_window(feat.T, window, 1)
             feat3 = feat[-window:]
+
             mean1 = feat1.mean(axis=0, keepdims=True).repeat(window // 2, axis=0)
             mean2 = feat2.mean(axis=2).T
             mean3 = feat3.mean(axis=0, keepdims=True).repeat((window - 1) // 2, axis=0)
+
             mean = np.concatenate([mean1, mean2, mean3])
+
             if norm_vars:
                 std1 = feat1.std(axis=0, keepdims=True).repeat(window // 2, axis=0)
                 std2 = feat2.std(axis=2).T
                 std3 = feat3.mean(axis=0, keepdims=True).repeat((window - 1) // 2, axis=0)
+
                 std = np.concatenate([std1, std2, std3])
+
     else:
+
         if num_frames <= min_window:
+
             mean = feat.mean(axis=0, keepdims=True).repeat(num_frames, axis=0)
+
             if norm_vars:
                 std = feat.std(axis=0, keepdims=True).repeat(num_frames, axis=0)
+
         else:
+
             feat1 = feat[:min_window]
+
             mean1 = feat1.mean(axis=0, keepdims=True).repeat(min_window, axis=0)
+
             feat2_cumsum = np.cumsum(feat[:window], axis=0)[min_window:]
+
             cumcnt = np.arange(min_window + 1, min(window, num_frames) + 1, dtype=feat.dtype)[:, np.newaxis]
+
             mean2 = feat2_cumsum / cumcnt
+
             mean = np.concatenate([mean1, mean2])
+
             if norm_vars:
                 std1 = feat1.std(axis=0, keepdims=True).repeat(min_window, axis=0)
+
                 feat2_power_cumsum = np.cumsum(np.square(feat[:window]), axis=0)[min_window:]
+
                 std2 = np.sqrt(feat2_power_cumsum / cumcnt - np.square(mean2))
+
                 std = np.concatenate([std1, std2])
+
             if num_frames > window:
+
                 feat3 = sliding_window(feat.T, window, 1)
+
                 mean3 = feat3.mean(axis=2).T
+
                 mean = np.concatenate([mean, mean3[1:]])
+
                 if norm_vars:
+                    #
                     std3 = feat3.std(axis=2).T
+
                     std = np.concatenate([std, std3[1:]])
+
     feat = (feat - mean) / std
+
     return feat
+
 
 # ---------- feature-functions ----------
 
@@ -259,7 +347,8 @@ def compute_lifter_coeffs(q, M):
     if M == 1:
         return np.ones(1, float)
     n = np.arange(0, M)
-    return 1 + 0.5*np.sin(np.pi*n/q)*q
+    return 1 + 0.5 * np.sin(np.pi * n / q) * q
+
 
 # ---------- mel-computations ----------
 
@@ -352,6 +441,7 @@ def compute_fbank_feats(
         return feat, log_energy
     return feat
 
+
 # ---------- compute-fbank-feats ----------
 
 
@@ -430,6 +520,7 @@ def compute_mfcc_feats(
     if use_energy:
         feat[:, 0] = log_energy
     return feat
+
 
 # ---------- compute-mfcc-feats ----------
 
